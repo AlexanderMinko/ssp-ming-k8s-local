@@ -9,7 +9,7 @@ bidders:
   image:
     # No registry: scripts/build-images.sh builds the image and copies it into every kind node.
     repository: ssp-ming/bidders
-    tag: "not-built-yet" # OWNED BY scripts/build-images.sh
+    tag: "92d5ef7-dirty-20261125191732" # OWNED BY scripts/build-images.sh
   replicas: 1
   resources:
     requests:

@@ -10,7 +10,7 @@ exchange:
   image:
     # No registry: scripts/build-images.sh builds the image and copies it into every kind node.
     repository: ssp-ming/exchange
-    tag: "not-built-yet" # OWNED BY scripts/build-images.sh
+    tag: "0749024-dirty-20261125191639" # OWNED BY scripts/build-images.sh
   # A laptop, not a load test: one pod, a small CPU request. Memory stays at the baseline (the heap is sized from it).
   resources:
     requests:
