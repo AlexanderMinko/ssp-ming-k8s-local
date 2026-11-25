@@ -1,0 +1,18 @@
+{{- if .Values.serviceMonitor.enabled }}
+# Tells the Prometheus Operator: scrape every Ready pod behind the exchange Service.
+# The cluster equivalent of a scrape job in prometheus.yml.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "exchange.fullname" . }}
+  labels:
+    {{- include "exchange.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "exchange.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http # the Service port NAME, not the number
+      path: {{ .Values.serviceMonitor.path }}
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

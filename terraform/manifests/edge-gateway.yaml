@@ -1,0 +1,60 @@
+# The local edge, applied by terraform_data.edge_gateway (02-envoy-gateway.tf).
+# Replaces platform/manifests/gatewayclass.yaml + shared-gateway.yaml of the EKS layer.
+#
+# EnvoyProxy — Envoy Gateway's counterpart of the AWS LoadBalancerConfiguration: HOW the proxy is exposed.
+# For each Gateway, Envoy Gateway creates an Envoy Deployment and a Service in envoy-gateway-system.
+# The default Service type is LoadBalancer, and kind has nothing that hands out load balancer IPs,
+# so it would stay <pending>. A NodePort with a FIXED port lets kind/cluster.yaml map it to the Mac.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: kind-nodeport
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: NodePort
+        # Cluster: every node forwards the NodePort, wherever the Envoy pod runs. The default, Local, answers
+        # only on nodes that run an Envoy pod — and kind maps the port on the control-plane node, which runs none.
+        externalTrafficPolicy: Cluster
+        # Pin the NodePort (Kubernetes picks a random 30000-32767 otherwise). A strategic merge patch on the
+        # generated Service: list items are matched by `port`, so only nodePort is added to the :80 entry.
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              ports:
+                - port: 80
+                  nodePort: 30080 # must equal containerPort in kind/cluster.yaml
+---
+# GatewayClass — registers Envoy Gateway as the Gateway API implementation (on EKS: `alb`).
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: kind-nodeport
+    namespace: envoy-gateway-system
+---
+# Shared, platform-owned edge — ONE Gateway that all apps attach HTTPRoutes to. Same name, namespace and
+# listener as on EKS, so the app charts' parentRefs work unchanged.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: shared
+  namespace: edge
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All

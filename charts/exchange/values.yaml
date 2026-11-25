@@ -1,0 +1,86 @@
+# Default values for the exchange chart. Override per-env with -f values-<env>.yaml.
+# Namespace via `helm -n <ns>`. Deploy charts/mongodb separately INTO THE SAME NAMESPACE
+# (the app reaches Mongo at the `mongodb` Service DNS — see config.MONGO_HOSTS).
+
+# Naming: fullnameOverride pins the resource names (keeps the Service/route/secret names stable).
+# Unset it for release-scoped names (<release>-exchange).
+nameOverride: ""
+fullnameOverride: exchange
+externalSecrets:
+  enabled: true
+  clusterSecretStore: aws-secretsmanager
+  remoteKey: eks-dev/exchange/mongodb # same source secret the mongodb chart uses
+  refreshInterval: 1h
+exchange:
+  image:
+    repository: 140023370575.dkr.ecr.eu-central-1.amazonaws.com/eks-dev/exchange
+    tag: 0.0.14 # OWNED BY CI — the app repo's bump-config job rewrites this on every release
+  containerPort: 8080
+  # CPU: a request, NO limit (decided 23/11/2026, as ssp-backend's OPS-9881). A CPU limit only throttles: on 22/11 new
+  # pods were throttled in 85-93% of periods during warm-up, stretching GC pauses past 1 s. Without it the pod uses idle
+  # node CPU; under contention the kernel still guarantees every pod its request. No -XX:ActiveProcessorCount: on
+  # 2-vCPU nodes it would cut the JVM to 1 CPU (1 virtual-thread carrier).
+  # Memory: request == limit, so the scheduler reserves what the pod really uses (heap = 60% of the limit, plus non-heap) and the
+  # kubelet doesn't pick it first under node memory pressure (it evicts pods above their request first).
+  # 700m, not 1000m (23/11/2026): with 1000m no node had room (free per node 150–790m of 1930m, fragmented by the
+  # platform pods), so the rollout's new pod stayed Pending. With no CPU limit the request only decides placement and
+  # the HPA target (70% → 490m a pod); the pod still uses idle node CPU. Re-derive from the next run's measured use.
+  resources:
+    requests:
+      cpu: "700m"
+      memory: "1Gi"
+    limits:
+      memory: "1Gi"
+  # replicas is HPA-owned (omitted from the Deployment). minReplicas 2 (decided 23/11/2026): on 22/11 one pod took the
+  # whole ramp and the HPA added cold pods mid-run. Target = 70% of the 700m request = 490m a pod, so 2 pods should carry
+  # ~500 rps without scaling (to verify). A 3rd pod needs a free 700m on one node; with 4 × t3.large (since 23/11/2026) and no Karpenter it may stay
+  # Pending (check `kubectl get pods -n production` during a run).
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 3
+    cpuUtilization: 70
+# Non-secret config → ConfigMap (consumed via envFrom).
+config:
+  MONGO_HOSTS: "mongodb:27017" # the mongodb Service (deployed by charts/mongodb, same namespace)
+  MONGO_DATABASE_NAME: "ssp-exchange"
+  MONGO_PARAMS: "?authSource=admin"
+  SPRING_THREADS_VIRTUAL_ENABLED: "true"
+  # Heap = 60% of the memory limit (~614 MB at 1Gi). JVM default 25% (260 MB): GC pauses up to 1.3 s on 22/11/2026.
+  # 75% (778 MB) on 23/11: the working set sat at 956–979 MiB of 1024 — the bidders' OOMKill pattern, a hair away.
+  # The other 40% is for metaspace, code cache, thread stacks, GC and native memory. (ssp-backend: 55%, with ZGC.)
+  # ExitOnOutOfMemoryError: an OOM ends the process at once (Kubernetes restarts it) instead of leaving it half-alive
+  # with dead threads until liveness gives up.
+  # JDK_JAVA_OPTIONS, not JAVA_TOOL_OPTIONS: only the `java` launcher reads it, so `jcmd` in the pod keeps a small heap.
+  JDK_JAVA_OPTIONS: "-XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError"
+  EXCHANGE_CONFIG_REFRESH_MS: "30000"
+  BIDDERS_BASE_URL: "http://bidders:8080" # the bidders Service (charts/bidders, same namespace); bidder endpoints are paths on it
+  EXCHANGE_BIDDER_CONNECT_TIMEOUT_MS: "100"
+  EXCHANGE_BIDDER_READ_TIMEOUT_MS: "400" # = the largest bidder window (tmax clamp 450 - 50); keep >= it, ends only hung calls
+  MANAGEMENT_ENDPOINTS_EXPOSURE: "health,info,metrics,prometheus" # prometheus → /actuator/prometheus for the ServiceMonitor
+  OTLP_METRICS_ENABLED: "false"
+  OTLP_ENDPOINT: "http://signoz-otel-collector.signoz.svc.cluster.local:4318" # SigNoz collector (terraform platform/07-signoz.tf); the app appends /v1/traces
+  TRACING_ENABLED: "true" # spans → SigNoz collector (OTLP_ENDPOINT); every request is traced (no sampling, decided 21/11/2026; on since 22/11/2026)
+  # 10% of auctions traced (decided 23/11/2026; was 1.0). The exchange's server span is the root of every trace, and the
+  # sampler is parent-based, so this value decides for the bidders too: a sampled auction is traced completely
+  # (exchange + all 3 bidders), the rest not at all. At 1.0 and 500 rps (~3,500 spans/s) ClickHouse fell behind and the
+  # SigNoz collector buffered 5.3 GB until the kubelet evicted it (22/11 EKS run).
+  TRACING_SAMPLING_PROBABILITY: "0.1"
+# Prometheus scrape (PULL). The ServiceMonitor CRD comes from kube-prometheus-stack (platform/),
+# so it must be installed before this chart syncs. Prometheus selects every ServiceMonitor
+# (serviceMonitorSelectorNilUsesHelmValues=false), so no `release:` label is needed.
+serviceMonitor:
+  enabled: true
+  path: /actuator/prometheus
+  interval: 15s
+# The app does NOT own a Gateway/ALB — it attaches an HTTPRoute to the SHARED gateway (platform/).
+route:
+  enabled: true
+  gatewayName: shared
+  gatewayNamespace: edge
+  sectionName: http
+  hostnames: [] # set per-app hostnames once multiple apps share the gateway (avoid route collisions)
+  healthCheckPath: /actuator/health/readiness # ALB target health (TargetGroupConfiguration); the default `/` returns 404
+  # The TargetGroupConfiguration is an AWS Load Balancer Controller kind. A cluster without that controller
+  # (kind) has no such CRD, and one unknown kind fails the whole Argo CD sync. `false` skips it; the HTTPRoute stays.
+  targetGroupConfiguration:
+    enabled: true

@@ -1,0 +1,27 @@
+# mongodb Application — deploys charts/mongodb into the production namespace of the kind cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mongodb
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/AlexanderMinko/ssp-ming-k8s-local.git
+    targetRevision: main
+    path: charts/mongodb
+    helm:
+      valueFiles:
+        # Both paths are relative to spec.source.path (charts/mongodb). Later files win.
+        # values.yaml = the chart baseline, kept equal to the EKS chart; the overlay holds the kind differences.
+        - values.yaml
+        - ../envs/local/mongodb.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production # pre-created by Terraform (terraform/01-namespaces.tf)
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false # production is Terraform-owned — don't let Argo CD create it

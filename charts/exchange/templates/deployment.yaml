@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "exchange.fullname" . }}
+  labels:
+    {{- include "exchange.labels" . | nindent 4 }}
+spec:
+  # replicas omitted — the HPA owns it (ArgoCD-safe, Phase 12)
+  # Rollout: remove one old pod first, then add its replacement (decided 23/11/2026). The default (maxSurge 25% → 1,
+  # maxUnavailable 25% → 0 with 2 pods) adds a pod BEFORE removing one, so it needs room for an extra pod. On a full
+  # cluster that pod stays Pending, the old pod is never removed, and the rollout deadlocks with two versions serving
+  # (23/11/2026). Cost: during a rollout one fewer pod serves — don't roll during a load run.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "exchange.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll the pods when the config changes: envFrom is read only at container start, so a ConfigMap-only change
+        # would otherwise leave them on the old values. Helm's documented pattern ("Automatically Roll Deployments").
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "exchange.selectorLabels" . | nindent 8 }}
+    spec:
+      # Never on ClickHouse's node (decided 23/11/2026). In the 23/11 EKS run ClickHouse (SigNoz) used 1.2–2 cores
+      # next to an exchange pod on a 2-vCPU node: 100% CPU, GC pauses ~480 ms, a 2–3× longer tail. Required, not
+      # preferred: a preferred rule gives way exactly when nodes are full. The exchange declares it (not ClickHouse):
+      # ClickHouse's EBS volume pins it to one AZ, so constraining ClickHouse could leave it nowhere to run.
+      # IgnoredDuringExecution: checked only at scheduling; a running pod is never evicted by this rule.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: signoz
+              labelSelector:
+                matchLabels:
+                  clickhouse.altinity.com/chi: signoz-clickhouse
+      containers:
+        - name: exchange
+          image: "{{ .Values.exchange.image.repository }}:{{ .Values.exchange.image.tag }}"
+          ports:
+            - containerPort: {{ .Values.exchange.containerPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "exchange.fullname" . }}-config
+            - secretRef:
+                name: {{ include "exchange.fullname" . }}-secret
+          resources:
+            {{- toYaml .Values.exchange.resources | nindent 12 }}
+          # Probes (decided 23/11/2026, after the 22/11 EKS run): liveness = "stuck for good" → restart;
+          # readiness = "slow right now" → out of rotation, no restart. With timeout 1 s and 3 failures, a GC pause or
+          # CPU throttling got pods killed after ~30 s, and each restart made the overload worse.
+          # startupProbe holds back the other two until the app has started once: 30 × 5 s = 150 s budget,
+          # instead of a fixed initialDelaySeconds that a cold start under load can overrun.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: {{ .Values.exchange.containerPort }}
+            periodSeconds: 5
+            failureThreshold: 30
+          # Out of rotation after ~15 s of failed checks (3 × 5 s); 2 s per check.
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: {{ .Values.exchange.containerPort }}
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Restarted only after ~60 s without an answer (6 × 10 s); 5 s per check covers a long GC pause.
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: {{ .Values.exchange.containerPort }}
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6

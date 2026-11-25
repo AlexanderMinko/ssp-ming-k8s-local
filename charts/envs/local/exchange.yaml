@@ -1,0 +1,26 @@
+# envs/local/exchange.yaml — what differs on kind. Layered on charts/exchange/values.yaml by Argo CD
+# (argocd/apps/exchange.yaml). Only the differences: everything else comes from the baseline.
+
+# ESO reads a plain Kubernetes Secret instead of AWS Secrets Manager (terraform/03-eso.tf).
+# With the Kubernetes provider, remoteKey = the source Secret's NAME (in namespace `secret-source`).
+externalSecrets:
+  clusterSecretStore: local-kubernetes
+  remoteKey: exchange-mongodb
+exchange:
+  image:
+    # No registry: scripts/build-images.sh builds the image and copies it into every kind node.
+    repository: ssp-ming/exchange
+    tag: "not-built-yet" # OWNED BY scripts/build-images.sh
+  # A laptop, not a load test: one pod, a small CPU request. Memory stays at the baseline (the heap is sized from it).
+  resources:
+    requests:
+      cpu: "250m"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+config:
+  TRACING_SAMPLING_PROBABILITY: "1.0" # low traffic: trace every request (the 0.1 on EKS is for 500 rps)
+route:
+  # No AWS Load Balancer Controller here, so no TargetGroupConfiguration CRD. The HTTPRoute stays.
+  targetGroupConfiguration:
+    enabled: false

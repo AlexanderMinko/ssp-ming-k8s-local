@@ -1,0 +1,18 @@
+{{- if .Values.serviceMonitor.enabled }}
+# Tells the Prometheus Operator: scrape every Ready pod behind the bidders Service.
+# The cluster equivalent of the `bidders` scrape job in the exchange repo's observability/prometheus.yml.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "bidders.fullname" . }}
+  labels:
+    {{- include "bidders.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "bidders.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http # the Service port NAME, not the number
+      path: {{ .Values.serviceMonitor.path }}
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

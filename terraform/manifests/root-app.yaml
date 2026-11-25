@@ -1,0 +1,21 @@
+# root-app.yaml — the "App-of-Apps" root. Applied by Terraform (terraform_data.argocd_root, 05-argocd.tf).
+# It watches argocd/apps/ in THIS repo on GitHub and creates the child Applications found there.
+# After bootstrap you never `kubectl apply` an Application — add a file to argocd/apps/ and `git push`.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/AlexanderMinko/ssp-ming-k8s-local.git
+    targetRevision: main
+    path: argocd/apps # the directory of child Application manifests
+  destination:
+    server: https://kubernetes.default.svc # this same cluster
+    namespace: argocd # child Applications are created in the argocd namespace
+  syncPolicy:
+    automated:
+      prune: true # delete child Apps that are removed from git
+      selfHeal: true # revert manual kubectl edits back to the git state

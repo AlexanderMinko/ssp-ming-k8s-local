@@ -1,0 +1,10 @@
+# envs/local/mongodb.yaml — what differs on kind. Layered on charts/mongodb/values.yaml by Argo CD
+# (argocd/apps/mongodb.yaml). Only the differences: everything else comes from the baseline.
+
+# kind's built-in StorageClass (local-path provisioner): the volume is a directory on the node's disk,
+# inside the node container. It replaces gp3 / the EBS CSI driver, and it is lost with the cluster.
+storageClassName: standard
+# ESO reads a plain Kubernetes Secret instead of AWS Secrets Manager (terraform/03-eso.tf).
+externalSecrets:
+  clusterSecretStore: local-kubernetes
+  remoteKey: exchange-mongodb

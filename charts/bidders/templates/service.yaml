@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bidders.fullname" . }}
+  labels:
+    {{- include "bidders.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "bidders.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http # the ServiceMonitor refers to this port BY NAME
+      port: {{ .Values.bidders.containerPort }}
+      targetPort: {{ .Values.bidders.containerPort }}

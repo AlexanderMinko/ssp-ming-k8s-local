@@ -1,0 +1,60 @@
+# Default values for the bidders chart. Argo CD loads ONLY this file (see argocd/apps/bidders.yaml).
+# Namespace via `helm -n <ns>`. Needs charts/mongodb deployed INTO THE SAME NAMESPACE — the bidders
+# use their own database (ssp-bidders) on that shared Mongo instance.
+
+# Naming: fullnameOverride pins resource names. The exchange calls this service at
+# http://bidders:8080 (exchange config BIDDERS_BASE_URL) — renaming breaks that link.
+nameOverride: ""
+fullnameOverride: bidders
+externalSecrets:
+  enabled: true
+  clusterSecretStore: aws-secretsmanager
+  remoteKey: eks-dev/exchange/mongodb # same source secret as the mongodb + exchange charts (root creds)
+  refreshInterval: 1h
+bidders:
+  image:
+    # Own ECR repo: eks-dev/exchange holds the exchange's 0.0.<run> tags and is IMMUTABLE → tags would collide.
+    repository: 140023370575.dkr.ecr.eu-central-1.amazonaws.com/eks-dev/bidders
+    tag: 0.0.3 # OWNED BY CI once the bidders repo has a bump-config job
+  # Fixed replica count, no HPA: Liquibase migrates at startup and the simulator needs one bidder pod.
+  replicas: 2
+  containerPort: 8080
+  # CPU: a request, NO limit; memory: request == limit. Same reasoning as charts/exchange/values.yaml.
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "768Mi"
+    limits:
+      memory: "768Mi"
+# Non-secret config → ConfigMap (consumed via envFrom). MONGO_USER/MONGO_PASSWORD come from the Secret.
+config:
+  MONGO_HOSTS: "mongodb:27017" # the mongodb Service (charts/mongodb, same namespace)
+  MONGO_DATABASE_NAME: "ssp-bidders"
+  SPRING_THREADS_VIRTUAL_ENABLED: "true"
+  # Heap = 60% of the memory limit (~460 MB at 768Mi). JVM default 25% (195 MB): OutOfMemoryError on 22/11/2026 killed
+  # Tomcat's acceptor. 75% (584 MB) on 23/11: heap + ~120 MiB non-heap + native memory passed 768Mi and the kernel
+  # OOMKilled both pods mid-run (exit 137). The other 40% is for metaspace, code cache, thread stacks, GC and native.
+  # ExitOnOutOfMemoryError: an OOM ends the process at once (Kubernetes restarts it). On 22/11 the process lived on
+  # with a dead acceptor thread, accepting no connections, until liveness killed it.
+  # JDK_JAVA_OPTIONS, not JAVA_TOOL_OPTIONS: only the `java` launcher reads it, so `jcmd` in the pod keeps a small heap.
+  JDK_JAVA_OPTIONS: "-XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError"
+  MIGRATION_ENABLED: "true" # Liquibase seeds bidders + creatives at startup
+  BIDDERS_CATALOG_REFRESH_MS: "30000"
+  MANAGEMENT_ENDPOINTS_EXPOSURE: "health,info,metrics,prometheus" # prometheus → /actuator/prometheus for the ServiceMonitor
+  OTLP_METRICS_ENABLED: "false"
+  OTLP_ENDPOINT: "http://signoz-otel-collector.signoz.svc.cluster.local:4318" # SigNoz collector (terraform platform/07-signoz.tf); the app appends /v1/traces
+  TRACING_ENABLED: "true" # spans → SigNoz collector (OTLP_ENDPOINT); every request is traced (no sampling, decided 21/11/2026; on since 22/11/2026)
+  # Same as the exchange (0.1, decided 23/11/2026). It applies only to calls WITHOUT a traceparent (a manual curl):
+  # calls from the exchange follow the exchange's sampling decision (parent-based sampler).
+  TRACING_SAMPLING_PROBABILITY: "0.1"
+  # One JSON line per bid request (3 per auction) switched off (decided 23/11/2026): at 500 rps that was 1,500 lines/s
+  # into ClickHouse, and the exchange's AUCTION_EVENTS line already holds every bidder's outcome and latency.
+  # INFO turns it back on.
+  BID_EVENTS_LOG_LEVEL: "OFF"
+# Prometheus scrape (PULL). The ServiceMonitor CRD comes from kube-prometheus-stack (platform/),
+# so it must be installed before this chart syncs. Prometheus selects every ServiceMonitor
+# (serviceMonitorSelectorNilUsesHelmValues=false), so no `release:` label is needed.
+serviceMonitor:
+  enabled: true
+  path: /actuator/prometheus
+  interval: 15s

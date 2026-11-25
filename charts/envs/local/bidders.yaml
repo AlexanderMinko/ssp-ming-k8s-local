@@ -1,0 +1,18 @@
+# envs/local/bidders.yaml — what differs on kind. Layered on charts/bidders/values.yaml by Argo CD
+# (argocd/apps/bidders.yaml). Only the differences: everything else comes from the baseline.
+
+# ESO reads a plain Kubernetes Secret instead of AWS Secrets Manager (terraform/03-eso.tf).
+externalSecrets:
+  clusterSecretStore: local-kubernetes
+  remoteKey: exchange-mongodb
+bidders:
+  image:
+    # No registry: scripts/build-images.sh builds the image and copies it into every kind node.
+    repository: ssp-ming/bidders
+    tag: "not-built-yet" # OWNED BY scripts/build-images.sh
+  replicas: 1
+  resources:
+    requests:
+      cpu: "250m"
+config:
+  TRACING_SAMPLING_PROBABILITY: "1.0" # only for calls without a traceparent; the exchange decides for the rest

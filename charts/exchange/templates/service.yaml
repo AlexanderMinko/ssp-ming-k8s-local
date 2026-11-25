@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "exchange.fullname" . }}
+  labels:
+    {{- include "exchange.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "exchange.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http # the ServiceMonitor refers to this port BY NAME
+      port: {{ .Values.exchange.containerPort }}
+      targetPort: {{ .Values.exchange.containerPort }}

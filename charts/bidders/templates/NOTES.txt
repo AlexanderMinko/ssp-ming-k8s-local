@@ -1,0 +1,6 @@
+{{ include "bidders.fullname" . }} (dummy DSP bidders) deployed to namespace {{ .Release.Namespace }}.
+
+In-cluster only (no HTTPRoute). The exchange calls http://{{ include "bidders.fullname" . }}:{{ .Values.bidders.containerPort }}/bid/<bidderKey>.
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} get deploy,svc,externalsecret -l app.kubernetes.io/instance={{ .Release.Name }}

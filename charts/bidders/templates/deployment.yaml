@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bidders.fullname" . }}
+  labels:
+    {{- include "bidders.labels" . | nindent 4 }}
+spec:
+  # Fixed replicas (no HPA) — safe to keep in the manifest: nothing else writes this field.
+  replicas: {{ .Values.bidders.replicas }}
+  selector:
+    matchLabels:
+      {{- include "bidders.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll the pods when the config changes: envFrom is read only at container start, so a ConfigMap-only change
+        # would otherwise leave them on the old values. Helm's documented pattern ("Automatically Roll Deployments").
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "bidders.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: bidders
+          image: "{{ .Values.bidders.image.repository }}:{{ .Values.bidders.image.tag }}"
+          ports:
+            - containerPort: {{ .Values.bidders.containerPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "bidders.fullname" . }}-config
+            - secretRef:
+                name: {{ include "bidders.fullname" . }}-secret
+          resources:
+            {{- toYaml .Values.bidders.resources | nindent 12 }}
+          # startupProbe holds back liveness/readiness until the app has started once. Liquibase migrates at
+          # startup (on a 250m CPU request a cold start passed 60 s; the request is 500m since 23/11/2026) — the old liveness delay (30 s + 3 × 10 s)
+          # would kill the pod mid-migration and loop it. Budget here: 30 × 5 s = 150 s.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: {{ .Values.bidders.containerPort }}
+            periodSeconds: 5
+            failureThreshold: 30
+          # Liveness = "stuck for good" → restart; readiness = "slow right now" → out of rotation, no restart
+          # (decided 23/11/2026: with timeout 1 s and 3 failures the pod was killed 4 times in the 22/11 EKS run).
+          # Out of rotation after ~15 s of failed checks (3 × 5 s); 2 s per check.
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: {{ .Values.bidders.containerPort }}
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Restarted only after ~60 s without an answer (6 × 10 s); 5 s per check covers a long GC pause.
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: {{ .Values.bidders.containerPort }}
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6

@@ -1,0 +1,30 @@
+# NOTE: git treats `#` as a comment ONLY at the start of a line — keep comments on their own lines.
+
+# --- Terraform ---
+.terraform/
+# LOCAL state: holds the generated Mongo password in plain text. Never commit.
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+*.tfvars
+!*.tfvars.example
+# NOTE: .terraform.lock.hcl IS committed (pins provider versions).
+
+# --- Helm ---
+charts/*/charts/
+*.tgz
+rendered.yaml
+*.rendered.yaml
+
+# --- Secrets: defensive net, none belong here ---
+.env
+*.env
+secrets.yaml
+
+# --- Local / OS / IDE ---
+.DS_Store
+.idea/
+.vscode/
+kubeconfig
+*.log
