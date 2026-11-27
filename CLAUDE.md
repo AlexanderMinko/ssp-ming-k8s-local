@@ -27,6 +27,11 @@ time, lay out options, push back, no over-engineering.
 - **Storage:** StorageClass `standard` (local-path). Volumes die with the cluster.
 - **Observability:** same charts and versions as EKS (VictoriaMetrics stack `vm`, SigNoz, `k8s-infra`), with
   smaller requests and volumes. Dashboards come from `ssp-ming-monitoring` on GitHub, as on EKS.
+- **Log collection = one chain on the laptop, kind and EKS** (26/11/2026): operators json → time (`@timestamp`, gotime `2006-01-02T15:04:05.000Z07:00`) → trace → severity → `service_name` → resource `service.name` → `message` → body (kind and EKS add the container parser first). No flatten processor (added then dropped 26/11/2026, owner's choice): SigNoz stores the nested `payload` as one JSON string attribute, which its log view draws as an expandable tree, like ssp-backend's `testing_body`; search inside it by text (`payload CONTAINS 'gamma'`), not by field. The chain lives in `ssp-ming-exchange/observability/signoz/ingester/ingester.yaml` (local) and in `presets.logsCollection.operators` of `07-signoz.tf` in `ssp-ming-exchange-terraform/platform/` and `ssp-ming-k8s-local/terraform/`. Keep the three in step.
+
+- **MCP servers:** `echo kind > ~/.ssp-ming-mcp-target`, run `scripts/port-forward.sh`, start a new session.
+  The forwards use the `eks` ports of `ssp-ming-mcp/ports.json`. Mongo credentials come from the Secret
+  `secret-source/exchange-mongodb`; the SigNoz key from the Keychain item `ssp-signoz-kind-api-key`.
 
 ## Rules
 
@@ -37,9 +42,8 @@ time, lay out options, push back, no over-engineering.
 - Chart versions stay equal to the EKS pins, so a local result transfers.
 - Dates DD/MM/YYYY, metric units.
 
-## Not verified yet (written 25/11/2026 without a running cluster)
+## Verified on a running cluster (25/11/2026)
 
-- The `EnvoyProxy` strategic-merge patch that pins NodePort 30080 (`terraform/manifests/edge-gateway.yaml`).
-  Fields checked against the Envoy Gateway 1.10.0 CRD; the merge result is untested.
-- Memory fit of the full stack in Docker Desktop.
-- Remove an item here once a real `terraform apply` confirms it.
+- First `terraform apply` on kind: all five Argo CD apps `Synced` / `Healthy`, every pod `Running`.
+- The edge: the `EnvoyProxy` patch pins NodePort 30080, and `http://localhost:28080` reaches the exchange.
+- Memory: the full stack uses about 10 GiB of Docker Desktop's 13.6 GiB when idle.

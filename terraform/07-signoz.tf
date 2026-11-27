@@ -115,11 +115,18 @@ resource "helm_release" "signoz" {
 resource "terraform_data" "clickhouse_scrape" {
   triggers_replace = { manifest = filesha256("${path.module}/manifests/clickhouse-vmservicescrape.yaml") }
   provisioner "local-exec" {
-    command = "${local.kubectl} apply -f ${path.module}/manifests/clickhouse-vmservicescrape.yaml"
+    # The VMServiceScrape CRD now comes from Argo CD's `vm` app (27/11/2026), which syncs after the root app
+    # exists. So wait for the CRD to appear and be established first (up to 10 min), then apply.
+    # Temporary: step 5 moves this manifest into Argo CD too.
+    command = <<-EOT
+      ${local.kubectl} wait --for=create crd/vmservicescrapes.operator.victoriametrics.com --timeout=600s
+      ${local.kubectl} wait --for=condition=Established crd/vmservicescrapes.operator.victoriametrics.com --timeout=60s
+      ${local.kubectl} apply -f ${path.module}/manifests/clickhouse-vmservicescrape.yaml
+    EOT
   }
   depends_on = [
-    helm_release.signoz,                     # the namespace `signoz` and the metrics Service
-    helm_release.victoria_metrics_k8s_stack, # the VMServiceScrape CRD and the vmagent that reads it
+    helm_release.signoz,        # the namespace `signoz` and the metrics Service
+    terraform_data.argocd_root, # the root app that brings `vm` (the CRD and the vmagent that reads it)
   ]
 }
 
@@ -193,6 +200,14 @@ resource "helm_release" "signoz_k8s_infra" {
             parse_to   = "attributes"
           },
           {
+            id          = "time-parser" # the app's @timestamp becomes the record time (when it wrote the line)
+            type        = "time_parser"
+            if          = "attributes[\"@timestamp\"] != nil"
+            parse_from  = "attributes[\"@timestamp\"]"
+            layout_type = "gotime"
+            layout      = "2006-01-02T15:04:05.000Z07:00"
+          },
+          {
             id   = "trace-parser" # MDC traceId/spanId (Micrometer Tracing) → the log record's trace_id/span_id
             type = "trace_parser"
             if   = "attributes.traceId != nil"
@@ -208,6 +223,13 @@ resource "helm_release" "signoz_k8s_infra" {
             type       = "severity_parser"
             if         = "attributes.level != nil"
             parse_from = "attributes.level"
+          },
+          {
+            id   = "service-name-to-resource" # the encoder's service_name → resource service.name (SigNoz's service)
+            type = "move"
+            if   = "attributes.service_name != nil"
+            from = "attributes.service_name"
+            to   = "resource[\"service.name\"]"
           },
           {
             id   = "message-to-body" # the readable message becomes the body; the rest stays as attributes

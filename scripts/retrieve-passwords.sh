@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# retrieve-passwords.sh — copy a chart-generated admin password to the macOS clipboard.
+# retrieve-passwords.sh — copy a generated admin password to the macOS clipboard.
 #
-# WHY: Grafana and Argo CD generate their admin passwords at install time and keep them only in a cluster Secret,
-# so every rebuild has new ones. This script reads the Secret and pipes the value straight into `pbcopy`:
+# WHY: the Grafana and Argo CD admin passwords are generated at install time and live only in a cluster Secret,
+# so every rebuild has new ones. (Argo CD's comes from its chart. Grafana's comes from Terraform's random_password,
+# synced by ESO since 27/11/2026.) This script reads the Secret and pipes the value straight into `pbcopy`:
 # the password is never printed, so it stays out of the terminal scrollback (and out of any AI chat reading it).
 #
 # One service per run, because the clipboard holds one value.
@@ -28,7 +29,7 @@ command -v pbcopy >/dev/null || { echo "ERROR: pbcopy not found (this script is 
 case "$SERVICE" in
   grafana)
     NAMESPACE="monitoring"
-    SECRET="vm-grafana" # victoria-metrics-k8s-stack release `vm` (terraform/06-monitoring.tf)
+    SECRET="grafana-admin" # synced by ESO from secret-source/grafana-admin (terraform/03-eso.tf)
     KEY="admin-password"
     ;;
   argocd)

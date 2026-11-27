@@ -9,10 +9,9 @@ bidders:
   image:
     # No registry: scripts/build-images.sh builds the image and copies it into every kind node.
     repository: ssp-ming/bidders
-    tag: "92d5ef7-dirty-20261125191732" # OWNED BY scripts/build-images.sh
+    tag: "92d5ef7-dirty-20261127230613" # OWNED BY scripts/build-images.sh
   replicas: 1
   resources:
     requests:
       cpu: "250m"
-config:
-  TRACING_SAMPLING_PROBABILITY: "1.0" # only for calls without a traceparent; the exchange decides for the rest
+# TRACING_SAMPLING_PROBABILITY: no override, the baseline's 0.1 applies (same as the exchange, 25/11/2026).

@@ -10,16 +10,19 @@ exchange:
   image:
     # No registry: scripts/build-images.sh builds the image and copies it into every kind node.
     repository: ssp-ming/exchange
-    tag: "0749024-dirty-20261125191639" # OWNED BY scripts/build-images.sh
+    tag: "0749024-dirty-20261127230519" # OWNED BY scripts/build-images.sh
   # A laptop, not a load test: one pod, a small CPU request. Memory stays at the baseline (the heap is sized from it).
   resources:
     requests:
       cpu: "250m"
+  # maxReplicas 1 (26/11/2026): one pod, the HPA never scales. The HPA's target is 70% of the request (175m here), so at
+  # 200 rps it added a 2nd pod mid-ramp on 25/11. That pod started cold (no JIT, 0.8 cores while warming) and got
+  # traffic at once: a 1.3 s stall. For a 2-warm-pod test like EKS, set minReplicas and maxReplicas to 2.
   autoscaling:
     minReplicas: 1
-    maxReplicas: 2
-config:
-  TRACING_SAMPLING_PROBABILITY: "1.0" # low traffic: trace every request (the 0.1 on EKS is for 500 rps)
+    maxReplicas: 1
+# TRACING_SAMPLING_PROBABILITY: no override, the baseline's 0.1 applies. 1.0 here (until 25/11/2026) made ClickHouse take
+# 0.77 cores and 1.7 GiB during a 450–550 rps run on the laptop. The exchange's value decides for the whole trace.
 route:
   # No AWS Load Balancer Controller here, so no TargetGroupConfiguration CRD. The HTTPRoute stays.
   targetGroupConfiguration:

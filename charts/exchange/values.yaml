@@ -51,7 +51,10 @@ config:
   # ExitOnOutOfMemoryError: an OOM ends the process at once (Kubernetes restarts it) instead of leaving it half-alive
   # with dead threads until liveness gives up.
   # JDK_JAVA_OPTIONS, not JAVA_TOOL_OPTIONS: only the `java` launcher reads it, so `jcmd` in the pod keeps a small heap.
-  JDK_JAVA_OPTIONS: "-XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError"
+  # UseG1GC (26/11/2026): without a flag the JVM picks the Serial GC in a container below 1,792 MiB, one thread that
+  # stops every request while it runs. The kind run of 25/11 had Serial pauses of 0.7-1.2 s (exchange and bidders
+  # together: a 3.9 s request). G1 collects young generations with several threads and marks the old one concurrently.
+  JDK_JAVA_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError"
   EXCHANGE_CONFIG_REFRESH_MS: "30000"
   BIDDERS_BASE_URL: "http://bidders:8080" # the bidders Service (charts/bidders, same namespace); bidder endpoints are paths on it
   EXCHANGE_BIDDER_CONNECT_TIMEOUT_MS: "100"

@@ -14,6 +14,26 @@ resource "helm_release" "argocd" {
         # Plain HTTP for the API/UI: access is only via `kubectl port-forward` to localhost.
         "server.insecure" = true
       }
+
+      # LOCAL (27/11/2026, until EKS moves its add-ons to Argo CD too): the health check for Applications.
+      # Argo CD 1.8 dropped it, so a child app counts as Healthy the moment it exists. With it, the root app
+      # waits at each sync wave until the child apps of that wave are Healthy: CRDs (-2) → vm (-1) → apps (0).
+      cm = {
+        "resource.customizations.health.argoproj.io_Application" = <<-EOT
+          hs = {}
+          hs.status = "Progressing"
+          hs.message = ""
+          if obj.status ~= nil then
+            if obj.status.health ~= nil then
+              hs.status = obj.status.health.status
+              if obj.status.health.message ~= nil then
+                hs.message = obj.status.health.message
+              end
+            end
+          end
+          return hs
+        EOT
+      }
     }
   })]
 }
@@ -27,14 +47,14 @@ resource "terraform_data" "argocd_root" {
     command = "${local.kubectl} apply -f ${path.module}/manifests/root-app.yaml"
   }
 
-  # Everything the app charts reference must exist before the first sync: one unknown kind (ServiceMonitor,
-  # HTTPRoute, ExternalSecret) fails the WHOLE sync, and auto-sync doesn't retry the same commit.
+  # Everything the app charts reference must exist before the first sync: one unknown kind (HTTPRoute,
+  # ExternalSecret) fails the WHOLE sync, and auto-sync doesn't retry the same commit.
+  # The ServiceMonitor CRD and `monitoring` are no longer here (27/11/2026): Argo CD installs them itself,
+  # in sync waves before the apps (argocd/apps/prometheus-operator-crds.yaml, vm.yaml).
   depends_on = [
     helm_release.argocd,
-    helm_release.prometheus_operator_crds,   # ServiceMonitor CRD
-    terraform_data.edge_gateway,             # HTTPRoute CRD + the Gateway `edge/shared`
-    terraform_data.clustersecretstore,       # ExternalSecret CRD + the store
-    kubernetes_namespace_v1.app,             # `production`
-    helm_release.victoria_metrics_k8s_stack, # namespace `monitoring` + the Grafana sidecar (dashboards app)
+    terraform_data.edge_gateway,       # HTTPRoute CRD + the Gateway `edge/shared`
+    terraform_data.clustersecretstore, # ExternalSecret CRD + the store
+    kubernetes_namespace_v1.app,       # `production`
   ]
 }

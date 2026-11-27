@@ -44,6 +44,26 @@ resource "kubernetes_secret_v1" "mongodb_source" {
   }
 }
 
+# Grafana's admin login (27/11/2026). The VM stack moved to Argo CD, and the chart's own generated password is
+# random on every render, so Argo CD would rotate it. Instead the chart reads the Secret `grafana-admin`, which
+# ESO syncs from here (platform/vm/manifests/grafana-admin-externalsecret.yaml). Same ⚠️ as the Mongo password.
+resource "random_password" "grafana_admin" {
+  length  = 24
+  special = false
+}
+
+resource "kubernetes_secret_v1" "grafana_admin_source" {
+  metadata {
+    name      = "grafana-admin" # = remoteRef.key in the ExternalSecret
+    namespace = kubernetes_namespace_v1.secret_source.metadata[0].name
+  }
+
+  data = {
+    admin-user     = "admin"
+    admin-password = random_password.grafana_admin.result
+  }
+}
+
 # --- The identity the store reads with (the local stand-in for the ESO IAM role) ---
 # ESO asks the API server for a short-lived token of this ServiceAccount and reads the Secret as it.
 resource "kubernetes_service_account_v1" "eso_store_reader" {

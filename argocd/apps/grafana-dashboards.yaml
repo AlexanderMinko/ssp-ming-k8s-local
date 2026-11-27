@@ -16,7 +16,7 @@ spec:
     path: . # the chart is the repo root
   destination:
     server: https://kubernetes.default.svc
-    namespace: monitoring # Terraform-owned (terraform/06-monitoring.tf creates it with the VM stack)
+    namespace: monitoring # created by the `vm` app (wave -1), which syncs before this one (wave 0)
   syncPolicy:
     automated:
       prune: true # a dashboard deleted from git disappears from Grafana

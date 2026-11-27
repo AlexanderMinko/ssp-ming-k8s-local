@@ -43,22 +43,34 @@ log agent, and the three charts.
 
 ## Start
 
-Run these from the repo root, in order.
+Run everything from the repo root, in order. The image build comes before `terraform apply`, so Argo CD
+finds the images on its first sync and no pod waits in `ImagePullBackOff`.
 
-1. Create the cluster.
+1. Create the cluster (skip it if it is still up).
 
    ```bash
    ./scripts/cluster-up.sh
    ```
 
-2. Build the app images, load them into the nodes, and write their tags into the overlays.
+2. Point the MCP servers at kind.
+
+   ```bash
+   echo kind > ~/.ssp-ming-mcp-target
+   ```
+
+3. Build both images, load them into the nodes, and write their tags into the overlays.
 
    ```bash
    ./scripts/build-images.sh all
    ```
 
-3. Commit and push the changed `charts/envs/local/*.yaml`.
-4. Install the platform. The first apply takes about 10 minutes (SigNoz is slow).
+4. Commit and push the changed overlays. Argo CD reads the tags from GitHub.
+
+   ```bash
+   git add charts/envs/local && git commit -m "Bump local image tags" && git push
+   ```
+
+5. Install the platform. The first run takes about 10 minutes (SigNoz is slow).
 
    ```bash
    terraform -chdir=terraform init
@@ -68,7 +80,7 @@ Run these from the repo root, in order.
    terraform -chdir=terraform apply
    ```
 
-5. Check the apps and the edge.
+6. Check the apps and the edge.
 
    ```bash
    kubectl --context kind-ssp-local -n argocd get applications
@@ -78,19 +90,62 @@ Run these from the repo root, in order.
    curl -s http://localhost:28080/actuator/health/readiness
    ```
 
-   Expected: every Application `Synced` and `Healthy`, and `{"status":"UP"}` from curl.
+   Expected: every Application `Synced` and `Healthy`, then `{"status":"UP"}`.
+
+7. Open the forwards in a separate terminal and leave it running.
+
+   ```bash
+   ./scripts/port-forward.sh
+   ```
+
+## Logins and keys
+
+The passwords and the SigNoz key are new after every cluster re-creation.
+
+1. Copy the Grafana password, then log in at http://localhost:13000 as `admin`.
+
+   ```bash
+   ./scripts/retrieve-passwords.sh grafana
+   ```
+
+2. Copy the Argo CD password, then log in at http://localhost:18080 as `admin`.
+
+   ```bash
+   ./scripts/retrieve-passwords.sh argocd
+   ```
+
+3. Open SigNoz at http://localhost:13301 and create the admin account. Then create a key under
+   Settings → Service Accounts → Keys.
+4. Store that key in the Keychain. The command prompts for it, so the key stays out of the shell history.
+
+   ```bash
+   security add-generic-password -U -a "$USER" -s ssp-signoz-kind-api-key -w
+   ```
+
+5. Start a new Claude Code session. The MCP servers read `~/.ssp-ming-mcp-target` at start.
+
+## Stop
+
+1. Delete the cluster and the Terraform state.
+
+   ```bash
+   ./scripts/cluster-down.sh
+   ```
+
+2. Set the MCP flag back.
+
+   ```bash
+   echo local > ~/.ssp-ming-mcp-target
+   ```
 
 ## Daily use
 
 | Task | Command |
 |---|---|
-| Open Grafana, Argo CD, SigNoz, VictoriaMetrics, Mongo | `./scripts/port-forward.sh` |
-| Copy an admin password | `./scripts/retrieve-passwords.sh grafana` or `argocd` |
 | Deploy an app change | `./scripts/build-images.sh exchange`, then commit and push the overlay |
 | Deploy a chart or values change | edit, commit, push; Argo CD syncs within about 3 minutes |
-| Delete everything | `./scripts/cluster-down.sh` |
-
-SigNoz asks you to create the admin account at first login.
+| Open the UIs and data ports | `./scripts/port-forward.sh` (the EKS ports of `ssp-ming-mcp/ports.json`) |
+| Copy an admin password | `./scripts/retrieve-passwords.sh grafana` or `argocd` |
 
 ## Things that differ from EKS on purpose
 
