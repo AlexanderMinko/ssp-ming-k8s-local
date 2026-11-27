@@ -1,0 +1,3 @@
+# platform/envs/local/k8s-infra.yaml — kind differences for the log agent. Loaded after platform/k8s-infra/values.yaml.
+
+clusterName: kind-ssp-local # the k8s.cluster.name attribute on every log line (eks-dev on EKS)

@@ -1,0 +1,87 @@
+# platform/signoz/values.yaml — values of the signoz chart (the logs + traces BACKEND), as EKS will use them.
+# Moved from terraform/07-signoz.tf (helm_release) to Argo CD on 27/11/2026. Read by argocd/apps/signoz.yaml.
+# Kind differences live in platform/envs/local/signoz.yaml (later file wins, maps deep-merge).
+#
+# ⚠️ The heaviest part of the local stack: ClickHouse alone uses 1–2 GB. Docker Desktop needs 12 GiB or more.
+#
+# What the chart installs (namespace `signoz`), in data-flow order:
+#   signoz-otel-collector   Deployment  OTLP ingest :4317 (gRPC) / :4318 (HTTP) → writes to ClickHouse
+#   signoz-clickhouse       StatefulSet the columnar store for logs + traces. It is NOT a plain StatefulSet from
+#                                       the chart: the chart creates a ClickHouseInstallation custom resource,
+#                                       and the bundled Altinity clickhouse-operator turns it into the
+#                                       StatefulSet + Services.
+#   signoz-zookeeper        StatefulSet coordination for ClickHouse (PVC 8Gi). SigNoz's schema uses
+#                                       `ON CLUSTER` DDL, which needs ZooKeeper even with one node.
+#   signoz-telemetrystore-migrator Job  creates/upgrades the ClickHouse tables. Under Argo CD it carries the
+#                                       chart's own `Force=true,Replace=true`, so it is recreated on each change.
+#   signoz                  StatefulSet UI + query API :8080, its own settings in SQLite (PVC 1Gi)
+#
+# Why its own namespace (not `monitoring`): three PVCs, an operator and a migration Job — keeping them
+# apart makes `kubectl get all,pvc -n signoz` show exactly this stack.
+#
+# Retention (3 days, decided 16/11/2026) is NOT a chart value: SigNoz stores it as a setting and applies
+# it as a ClickHouse table TTL. Set it once in the UI after install: Settings → General → Logs and Traces.
+
+# Every PVC in the chart (ClickHouse, ZooKeeper, SigNoz SQLite).
+global:
+  storageClass: gp3
+
+clickhouse:
+  # requests = the measured upper bound of a 500 rps run. No limit on purpose: ClickHouse sizes its caches
+  # from the memory it sees; a tight limit without tuning max_server_memory_usage gets it OOM-killed.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+  persistence:
+    size: 20Gi # 3 days of pet-project logs + traces fit easily; gp3 allows volume expansion if not
+
+# The OTLP collector: a safety valve for overload (decided 23/11/2026). The chart sets no memory limit and,
+# despite its values comment, no memory_limiter (its templates never generate one). In the 22/11 load run
+# ClickHouse fell behind, the exporters' sending queues grew to 5.3 GB, and the kubelet evicted the collector
+# under node memory pressure — on a node that also ran the exchange and mongodb-0.
+#   memory limit    the hard stop: above it the kernel kills the container (OOMKilled), the node stays safe
+#   memory_limiter  the brake below it: refuses new data (OTLP error → the apps' BatchSpanProcessor drops spans)
+#                   so the queues drain and the collector keeps running
+#   GOMEMLIMIT      Go's GC aims below this, so garbage doesn't push the heap toward the hard limit
+otelCollector:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  additionalEnvs:
+    GOMEMLIMIT: 800MiB
+  config:
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80 # of the container limit (1Gi): hard limit ~820 MiB, forces a GC above it
+        spike_limit_percentage: 25 # soft limit = 80 − 25 = 55% (~560 MiB): refuse new data above it
+    # memory_limiter must be FIRST: it has to refuse data before any other processor spends memory on it.
+    # ⚠️ Helm replaces lists wholesale, so each list repeats the chart's default after memory_limiter
+    # (signoz chart 0.150.0). Maps deep-merge, so receivers/exporters keep the chart's values.
+    # On a chart upgrade: diff these lists against `helm show values signoz --version <new>`
+    # (otelCollector.config.service.pipelines), or a new default processor is silently dropped.
+    service:
+      pipelines:
+        traces:
+          processors:
+            - memory_limiter
+            - signozspanmetrics/delta
+            - signozspanmapper
+            - signozllmpricing
+            - filter/drop_stale
+            - batch
+        metrics:
+          processors:
+            - memory_limiter
+            - filter/drop_stale
+            - batch
+        logs:
+          processors:
+            - memory_limiter
+            - signozlogsnormalizer
+            - filter/drop_stale
+            - batch

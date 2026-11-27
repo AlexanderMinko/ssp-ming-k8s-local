@@ -1,0 +1,42 @@
+# signoz Application — the SigNoz backend (logs + traces on ClickHouse) into `signoz`.
+# Was terraform/07-signoz.tf (helm_release) until 27/11/2026. Same three-source shape as victoria-metrics.yaml:
+#   1. the chart from the upstream Helm repo, pinned to the EKS version
+#   2. this repo as `$values`: the value files
+#   3. this repo, platform/signoz/manifests/: the ClickHouse VMServiceScrape (self-monitoring through VictoriaMetrics)
+#
+# The Application name `signoz` is also the Helm release name, as under Terraform: signoz-clickhouse,
+# signoz-otel-collector, … stay the same.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: signoz
+  namespace: argocd
+  # No sync-wave annotation = wave 0: after victoria-metrics (-1), which brings the VMServiceScrape CRD that
+  # source 3 needs. The apps don't wait for SigNoz: an app whose collector is down drops spans and keeps serving.
+spec:
+  project: default
+  sources:
+    - repoURL: https://charts.signoz.io
+      chart: signoz
+      targetRevision: 0.150.0 # same pin as EKS
+      helm:
+        valueFiles:
+          - $values/platform/signoz/values.yaml
+          - $values/platform/envs/local/signoz.yaml
+    - repoURL: https://github.com/AlexanderMinko/ssp-ming-k8s-local.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/AlexanderMinko/ssp-ming-k8s-local.git
+      targetRevision: main
+      path: platform/signoz/manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: signoz
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true # `signoz` is now Argo CD's (Terraform created it with the helm_release)
+      # No ServerSideApply here, unlike victoria-metrics: the largest CRD is 77 KB (under the 256 KiB cap), and
+      # the chart's migrator Job carries `Force=true,Replace=true`, which Argo CD refuses to combine with it.

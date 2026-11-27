@@ -1,0 +1,15 @@
+# platform/envs/local/signoz.yaml — kind differences for SigNoz. Loaded after platform/signoz/values.yaml.
+# Helm deep-merges maps, so only the changed keys are here.
+
+global:
+  storageClass: standard # kind's local-path class (gp3 on EKS)
+
+clickhouse:
+  # Small requests (500m / 2Gi on EKS). The scheduler places by requests; here they only need to leave room for
+  # the other pods on a 2-worker cluster.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+  persistence:
+    size: 5Gi # 20Gi on EKS; local-path does not enforce the size

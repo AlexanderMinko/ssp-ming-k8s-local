@@ -1,0 +1,99 @@
+# platform/k8s-infra/values.yaml — values of the k8s-infra chart (the LOG AGENT that feeds SigNoz), as EKS will
+# use them. Moved from terraform/07-signoz.tf (helm_release) to Argo CD on 27/11/2026. Read by
+# argocd/apps/k8s-infra.yaml. Kind differences live in platform/envs/local/k8s-infra.yaml.
+#
+# One DaemonSet `k8s-infra-otel-agent` = one OpenTelemetry Collector pod per node. Its logs pipeline:
+#
+#   filelog/k8s receiver   tails /var/log/pods/<ns>_<pod>_<uid>/<container>/<n>.log on ITS node
+#                          (hostPath mount). The kubelet/containerd write every container's stdout there,
+#                          so the apps change nothing — they just print.
+#   container operator     strips the CRI prefix ("<time> stdout F ") and keeps the message
+#   json/trace/severity    parse the app's JSON line; traceId/spanId → the record's trace_id/span_id
+#   k8sattributes          asks the API server which pod owns the file → adds k8s.namespace.name,
+#                          k8s.pod.name, k8s.deployment.name, … (that's what the ClusterRole is for)
+#   resourcedetection      adds the node / cluster identity
+#   otlphttp exporter      pushes batches to signoz-otel-collector:4318 → ClickHouse
+#
+# Logs only (decided 16/11/2026): node, kubelet and cluster METRICS stay in VictoriaMetrics, so those
+# presets are off here — otherwise ClickHouse stores a second copy of what vmagent already scrapes.
+# That also removes the second component (otel-deployment), which only exists for cluster metrics and
+# k8s events.
+#
+# Not persisted: the read offsets. The chart has no file_storage extension, and start_at = end, so a
+# restarted agent resumes at the END of each file — lines written while it was down are skipped.
+# Prod adds file_storage on a hostPath; for learning it's a good thing to poke (see the plan).
+#
+# The agent also listens for OTLP on hostPort 4317/4318 on every node. Unused: the apps send traces
+# straight to the SigNoz collector (decided 21/11/2026, like ssp-backend).
+
+clusterName: eks-dev # becomes the k8s.cluster.name attribute on every log line
+
+# Full URL with scheme: the otlphttp exporter needs http://. The chart passes the value through as-is.
+# In-cluster plain HTTP is fine for learning (otelInsecure = true is the chart default); prod would
+# use TLS or let the mesh (Phase 14) add mTLS.
+otelCollectorEndpoint: http://signoz-otel-collector.signoz.svc.cluster.local:4318
+
+presets:
+  # logsCollection: chart defaults except two things.
+  # 1. A whitelist (decided 22/11/2026): only our business pods are collected; everything else is off by
+  #    default. Entries are OR-ed and match the pod-name prefix in /var/log/pods/<ns>_<pod>_<uid>/, so this
+  #    renders to include = *_exchange*_* and *_bidders*_*. Not `namespaces: [production]`: that would
+  #    also take mongodb-0. A new service is added here. Filtering at the agent means other pods' lines
+  #    never reach ClickHouse (a saved view in the UI would only hide them, still stored).
+  # 2. The operator chain (one chain on the laptop, kind and EKS, 26/11/2026; keep it in step with
+  #    ssp-ming-exchange/observability/signoz/ingester/ingester.yaml). A Helm list replaces the default list,
+  #    so container-parser is repeated. The apps print one JSON object per line. Without parsing, SigNoz
+  #    stores that line as an opaque body, and the `traceId` inside it never links the log to its trace.
+  logsCollection:
+    whitelist:
+      enabled: true
+      signozLogs: false # SigNoz's own pods stay out too
+      pods:
+        - exchange
+        - bidders
+    operators:
+      - id: container-parser # chart default: strips the CRI prefix ("<time> stdout F ")
+        type: container
+      - id: json-parser # JSON lines only; a plain-text line passes through untouched
+        type: json_parser
+        if: body startsWith "{"
+        parse_from: body
+        parse_to: attributes
+      - id: time-parser # the app's @timestamp becomes the record time (when it wrote the line)
+        type: time_parser
+        if: attributes["@timestamp"] != nil
+        parse_from: attributes["@timestamp"]
+        layout_type: gotime
+        layout: "2006-01-02T15:04:05.000Z07:00"
+      - id: trace-parser # MDC traceId/spanId (Micrometer Tracing) → the log record's trace_id/span_id
+        type: trace_parser
+        if: attributes.traceId != nil
+        trace_id:
+          parse_from: attributes.traceId
+        span_id:
+          parse_from: attributes.spanId
+      - id: severity-parser # the `level` field → SigNoz severity (filter by ERROR in the UI)
+        type: severity_parser
+        if: attributes.level != nil
+        parse_from: attributes.level
+      - id: service-name-to-resource # the encoder's service_name → resource service.name (SigNoz's service)
+        type: move
+        if: attributes.service_name != nil
+        from: attributes.service_name
+        to: resource["service.name"]
+      - id: message-to-body # the readable message becomes the body; the rest stays as attributes
+        type: move
+        if: attributes.message != nil
+        from: attributes.message
+        to: body
+  # kubernetesAttributes stays at its default. Switched off — VictoriaMetrics owns metrics:
+  hostMetrics:
+    enabled: false
+  kubeletMetrics:
+    enabled: false
+  clusterMetrics:
+    enabled: false
+
+# The otel-deployment only runs clusterMetrics and k8s events; with both off it would idle.
+otelDeployment:
+  enabled: false
