@@ -17,6 +17,10 @@ metadata:
     # After prometheus-operator-crds (-2): the operator must start with the ServiceMonitor CRD present, or it
     # skips the converter watch. Before the apps (0): grafana-dashboards needs `monitoring` and the sidecar.
     argocd.argoproj.io/sync-wave: "-1"
+    # Diff through a server-side dry-run apply, the pair of ServerSideApply below. Without it, fields the API
+    # server defaults inside a list (the ExternalSecret's remoteRef.conversionStrategy, …) show as a permanent
+    # OutOfSync (seen 27/11/2026).
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
   sources:
