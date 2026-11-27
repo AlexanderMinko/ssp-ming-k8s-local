@@ -1,7 +1,7 @@
 # 06-monitoring.tf — the metrics stack moved to Argo CD (27/11/2026). Terraform no longer installs it.
 #
 #   was helm_release.prometheus_operator_crds   → argocd/apps/prometheus-operator-crds.yaml (wave -2)
-#   was helm_release.victoria_metrics_k8s_stack → argocd/apps/vm.yaml (wave -1), values in platform/vm/
+#   was helm_release.victoria_metrics_k8s_stack → argocd/apps/victoria-metrics.yaml (wave -1), values in platform/victoria-metrics/
 #
 # Why: a values change is now a `git push`, and Argo CD reverts drift. Terraform keeps only what Argo CD
 # depends on (namespaces, Envoy Gateway, ESO, Argo CD itself).

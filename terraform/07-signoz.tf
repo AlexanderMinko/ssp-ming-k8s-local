@@ -115,7 +115,7 @@ resource "helm_release" "signoz" {
 resource "terraform_data" "clickhouse_scrape" {
   triggers_replace = { manifest = filesha256("${path.module}/manifests/clickhouse-vmservicescrape.yaml") }
   provisioner "local-exec" {
-    # The VMServiceScrape CRD now comes from Argo CD's `vm` app (27/11/2026), which syncs after the root app
+    # The VMServiceScrape CRD now comes from Argo CD's `victoria-metrics` app (27/11/2026), which syncs after the root app
     # exists. So wait for the CRD to appear and be established first (up to 10 min), then apply.
     # Temporary: step 5 moves this manifest into Argo CD too.
     command = <<-EOT
@@ -126,7 +126,7 @@ resource "terraform_data" "clickhouse_scrape" {
   }
   depends_on = [
     helm_release.signoz,        # the namespace `signoz` and the metrics Service
-    terraform_data.argocd_root, # the root app that brings `vm` (the CRD and the vmagent that reads it)
+    terraform_data.argocd_root, # the root app that brings `victoria-metrics` (the CRD and the vmagent that reads it)
   ]
 }
 

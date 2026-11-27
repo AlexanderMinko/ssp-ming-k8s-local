@@ -25,7 +25,7 @@ time, lay out options, push back, no over-engineering.
 - **Secrets:** ESO Kubernetes provider. Source Secret `secret-source/exchange-mongodb`, ClusterSecretStore
   `local-kubernetes`. No secret in git or chat.
 - **Storage:** StorageClass `standard` (local-path). Volumes die with the cluster.
-- **Observability:** same charts and versions as EKS (VictoriaMetrics stack `vm`, SigNoz, `k8s-infra`), with
+- **Observability:** same charts and versions as EKS (the VictoriaMetrics stack as Argo CD app `victoria-metrics` with Helm release `vm`, SigNoz, `k8s-infra`), with
   smaller requests and volumes. Dashboards come from `ssp-ming-monitoring` on GitHub, as on EKS.
 - **Log collection = one chain on the laptop, kind and EKS** (26/11/2026): operators json → time (`@timestamp`, gotime `2006-01-02T15:04:05.000Z07:00`) → trace → severity → `service_name` → resource `service.name` → `message` → body (kind and EKS add the container parser first). No flatten processor (added then dropped 26/11/2026, owner's choice): SigNoz stores the nested `payload` as one JSON string attribute, which its log view draws as an expandable tree, like ssp-backend's `testing_body`; search inside it by text (`payload CONTAINS 'gamma'`), not by field. The chain lives in `ssp-ming-exchange/observability/signoz/ingester/ingester.yaml` (local) and in `presets.logsCollection.operators` of `07-signoz.tf` in `ssp-ming-exchange-terraform/platform/` and `ssp-ming-k8s-local/terraform/`. Keep the three in step.
 

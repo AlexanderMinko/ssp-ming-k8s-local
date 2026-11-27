@@ -5,7 +5,7 @@
 # into a VMServiceScrape, but does not install the ServiceMonitor CRD. Without it, the API server doesn't know
 # the kind and the exchange sync fails with "no matches for kind ServiceMonitor".
 #
-# Wave -2: the first child app. Order: CRDs (-2) → vm (-1) → everything else (0). The root app waits for each
+# Wave -2: the first child app. Order: CRDs (-2) → victoria-metrics (-1) → everything else (0). The root app waits for each
 # wave to be Healthy before the next, which needs the Application health check in terraform/05-argocd.tf.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -22,7 +22,7 @@ spec:
     targetRevision: 33.0.2 # same pin as EKS (prometheus-operator v0.95.2)
   destination:
     server: https://kubernetes.default.svc
-    namespace: monitoring # CRDs are cluster-scoped. The namespace is only the release's home; `vm` creates it.
+    namespace: monitoring # CRDs are cluster-scoped. The namespace is only the release's home; `victoria-metrics` creates it.
   syncPolicy:
     automated:
       prune: true

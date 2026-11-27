@@ -46,7 +46,7 @@ resource "kubernetes_secret_v1" "mongodb_source" {
 
 # Grafana's admin login (27/11/2026). The VM stack moved to Argo CD, and the chart's own generated password is
 # random on every render, so Argo CD would rotate it. Instead the chart reads the Secret `grafana-admin`, which
-# ESO syncs from here (platform/vm/manifests/grafana-admin-externalsecret.yaml). Same ⚠️ as the Mongo password.
+# ESO syncs from here (platform/victoria-metrics/manifests/grafana-admin-externalsecret.yaml). Same ⚠️ as the Mongo password.
 resource "random_password" "grafana_admin" {
   length  = 24
   special = false
