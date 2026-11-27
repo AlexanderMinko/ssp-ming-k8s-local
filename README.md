@@ -19,6 +19,7 @@ Nothing here can change the EKS stack.
 | ECR + CI | `scripts/build-images.sh`: `docker build` + `kind load` |
 | metrics-server add-on | a Helm release (`terraform/04-metrics-server.tf`) |
 | Argo CD on `values.yaml` only | Argo CD on `values.yaml` + `charts/envs/local/<chart>.yaml` |
+| Terraform `helm_release` for VictoriaMetrics, SigNoz, `k8s-infra` | Argo CD apps with the upstream chart, values in `platform/` (since 27/11/2026) |
 
 Same as on EKS: ESO, Argo CD (App-of-Apps), VictoriaMetrics + Grafana, SigNoz + ClickHouse, the `k8s-infra`
 log agent, and the three charts.
@@ -31,7 +32,8 @@ log agent, and the three charts.
 | `terraform/` | the platform layer, one root with local state (mirrors `platform/` on EKS) |
 | `charts/` | `exchange`, `bidders`, `mongodb`: copies of the EKS charts plus one toggle |
 | `charts/envs/local/` | every kind-specific value |
-| `argocd/apps/` | the child Applications the root app creates |
+| `argocd/apps/` | the child Applications the root app creates: the three charts, the dashboards, and the add-ons |
+| `platform/` | the add-ons' values (`<app>/values.yaml` = EKS values), extra manifests, and `envs/local/` overrides |
 | `scripts/` | cluster up/down, image build, port-forwards, admin passwords |
 
 ## Prerequisites
@@ -70,7 +72,8 @@ finds the images on its first sync and no pod waits in `ImagePullBackOff`.
    git add charts/envs/local && git commit -m "Bump local image tags" && git push
    ```
 
-5. Install the platform. The first run takes about 10 minutes (SigNoz is slow).
+5. Install the platform. Terraform installs the bootstrap and the root app, and Argo CD then syncs the rest in
+   waves: CRDs, then VictoriaMetrics, then everything else. The first run takes about 10 minutes (SigNoz is slow).
 
    ```bash
    terraform -chdir=terraform init
@@ -144,6 +147,7 @@ The passwords and the SigNoz key are new after every cluster re-creation.
 |---|---|
 | Deploy an app change | `./scripts/build-images.sh exchange`, then commit and push the overlay |
 | Deploy a chart or values change | edit, commit, push; Argo CD syncs within about 3 minutes |
+| Change an add-on (VictoriaMetrics, SigNoz, `k8s-infra`) | edit `platform/<app>/values.yaml` or `platform/envs/local/<app>.yaml`, commit, push |
 | Open the UIs and data ports | `./scripts/port-forward.sh` (the EKS ports of `ssp-ming-mcp/ports.json`) |
 | Copy an admin password | `./scripts/retrieve-passwords.sh grafana` or `argocd` |
 
@@ -152,7 +156,7 @@ The passwords and the SigNoz key are new after every cluster re-creation.
 - **One replica each**, small CPU requests. This is not a load-test cluster.
 - **Tracing samples every request** (`1.0`); EKS uses `0.1` for 500 rps.
 - **Volumes die with the cluster.** `cluster-down.sh` removes Mongo data, metrics and logs.
-- **The Mongo password lives in the local Terraform state** in plain text. The state is git-ignored.
+- **The Mongo and Grafana passwords live in the local Terraform state** in plain text. The state is git-ignored.
 
 ## What stays EKS-only
 

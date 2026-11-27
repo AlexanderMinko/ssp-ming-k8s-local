@@ -18,12 +18,29 @@ time, lay out options, push back, no over-engineering.
   **Every kind-specific value goes into `charts/envs/local/<chart>.yaml`.**
 - **Argo CD:** root app → `argocd/apps/` of this repo on GitHub (`main`, public). Each app loads `values.yaml`
   then `../envs/local/<chart>.yaml`. Argo CD reads git: nothing deploys before `git push`.
+- **Platform add-ons = Argo CD apps** (27/11/2026, option B1). `argocd/apps/` also holds
+  `prometheus-operator-crds`, `victoria-metrics` (Helm release `vm`, so resources stay `vm-grafana`,
+  `vmsingle-vm`), `signoz` and `k8s-infra`. Each pins the upstream chart (same version as EKS) and reads
+  `$values/platform/<app>/values.yaml` (the EKS values) then `platform/envs/local/<app>.yaml`. Extra manifests
+  sit in `platform/<app>/manifests/`. Terraform keeps only the bootstrap: namespaces, Envoy Gateway, ESO,
+  metrics-server, Argo CD and the root app.
+- **Sync order:** waves on the child Applications: CRDs `-2` → `victoria-metrics` `-1` → the rest `0`. The root
+  app waits for each wave to be Healthy only because `terraform/05-argocd.tf` adds the Application health check
+  to `argocd-cm`.
+- **Apply mode:** `ServerSideApply=true` where a CRD exceeds 256 KiB (`victoria-metrics`,
+  `prometheus-operator-crds`). Not on `signoz`: its migrator Job carries `Force=true,Replace=true`.
+- **Gotchas found 27/11/2026:** an ExternalSecret in a server-side-applied app must spell out ESO's
+  `remoteRef` defaults (`conversionStrategy`, `decodingStrategy`, `metadataPolicy`), or it stays OutOfSync
+  even with `ServerSideDiff`. Renaming an Application deletes the old one, which runs the chart's pre-delete
+  hooks (the VM chart's deletes every VMSingle/VMAgent). Removing a `helm_release` from a live cluster needs a
+  `removed { lifecycle { destroy = false } }` block first, or `apply` uninstalls it.
 - **Images:** no registry. `scripts/build-images.sh` builds from the sibling app repos, runs `kind load`, and
   rewrites the `tag:` line in the overlay. One new tag per build; never `latest`.
 - **Edge:** Envoy Gateway. Gateway `edge/shared` (same name as on EKS), GatewayClass `envoy`, proxy Service
   NodePort 30080 → `http://localhost:28080`.
-- **Secrets:** ESO Kubernetes provider. Source Secret `secret-source/exchange-mongodb`, ClusterSecretStore
-  `local-kubernetes`. No secret in git or chat.
+- **Secrets:** ESO Kubernetes provider. Source Secrets `secret-source/exchange-mongodb` and
+  `secret-source/grafana-admin` (Terraform `random_password`), ClusterSecretStore `local-kubernetes`. No secret
+  in git or chat.
 - **Storage:** StorageClass `standard` (local-path). Volumes die with the cluster.
 - **Observability:** same charts and versions as EKS (the VictoriaMetrics stack as Argo CD app `victoria-metrics` with Helm release `vm`, and the Argo CD apps `signoz` and `k8s-infra`), with
   smaller requests and volumes. Dashboards come from `ssp-ming-monitoring` on GitHub, as on EKS.
@@ -47,3 +64,6 @@ time, lay out options, push back, no over-engineering.
 - First `terraform apply` on kind: all five Argo CD apps `Synced` / `Healthy`, every pod `Running`.
 - The edge: the `EnvoyProxy` patch pins NodePort 30080, and `http://localhost:28080` reaches the exchange.
 - Memory: the full stack uses about 10 GiB of Docker Desktop's 13.6 GiB when idle.
+- The add-on move (27/11/2026): a rebuild from zero synced the CRDs and VictoriaMetrics in wave order. SigNoz and
+  `k8s-infra` were then adopted in place on the running cluster: no pod restarted except ZooKeeper, once
+  (Argo CD's render drops `docker.io/` from its image). Result: all nine apps `Synced` / `Healthy`.
