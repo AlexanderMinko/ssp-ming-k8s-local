@@ -1,0 +1,72 @@
+# platform/vm/values.yaml — values of the victoria-metrics-k8s-stack chart, as EKS will use them.
+# Moved from terraform/06-monitoring.tf (helm_release) to Argo CD on 27/11/2026 (option B1: live Helm).
+# Kind differences live in platform/envs/local/vm.yaml (later file wins, maps deep-merge).
+#
+# Read by the Argo CD Application argocd/apps/vm.yaml. The Application is named `vm`, and Argo CD uses
+# the Application name as the Helm release name: subcharts stay vm-grafana, vm-kube-state-metrics, …
+# (The chart's `argocdReleaseOverride` exists only for Applications whose name differs from the release.)
+
+# Pins the VM custom resource names: VMSingle `vm` → Service `vmsingle-vm` (:8428),
+# VMAgent `vm` → Service `vmagent-vm`. KEDA (Phase 15) and Grafana point at vmsingle-vm.
+fullnameOverride: vm
+
+victoria-metrics-operator:
+  admissionWebhooks:
+    # Off for Argo CD: the chart generates the webhook's TLS certificate (genCA) on every render, so each
+    # render differs and Argo CD would loop OutOfSync → sync → new certificate → operator restart.
+    # The webhook only validates VM custom resources early; its failurePolicy is Ignore anyway.
+    enabled: false
+
+# Off until there's a receiver (Slack/email). Without vmalert no alert rules are evaluated.
+alertmanager:
+  enabled: false
+vmalert:
+  enabled: false
+
+# Control-plane components vmagent can't reach. EKS: AWS runs them outside the cluster.
+# kind: kubeadm binds their metrics ports to 127.0.0.1 of the control-plane node. Left on → targets DOWN.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+
+vmsingle:
+  spec:
+    # VM units: d/w/y, and a bare number means MONTHS. The chart default "1" = 1 month.
+    retentionPeriod: 7d
+    # requests = what the scheduler reserves. Without them vmsingle is BestEffort: evicted first.
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+    # One volume, one vmsingle pod → ReadWriteOnce.
+    storage:
+      storageClassName: gp3
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+
+# vmagent keeps the chart defaults: selectAllByDefault = true picks up every VMServiceScrape/VMPodScrape in
+# every namespace, including the ones the operator converts from the apps' ServiceMonitors.
+
+grafana:
+  # The admin password comes from the Secret `grafana-admin`, which ESO syncs (platform/vm/manifests/).
+  # Not chart-generated: that value is random on every render, so Argo CD would rotate it.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  # No persistence: dashboards come from ConfigMaps (Argo CD app grafana-dashboards).
+  persistence:
+    enabled: false
+  # Folders for the dashboard ConfigMaps: the sidecar writes each one into the subdirectory named by its
+  # `grafana_folder` annotation, and the provider turns subdirectories into Grafana folders.
+  sidecar:
+    dashboards:
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true

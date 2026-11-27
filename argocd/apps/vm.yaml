@@ -1,0 +1,48 @@
+# vm Application — the VictoriaMetrics stack (victoria-metrics-k8s-stack) into `monitoring`.
+# Was terraform/06-monitoring.tf (helm_release) until 27/11/2026. Now a values change is a git push.
+#
+# Three sources:
+#   1. the chart, straight from the upstream Helm repo (not copied into git), pinned to the EKS version
+#   2. this repo, as `$values`: only a reference, so source 1 can read value files from git
+#   3. this repo, platform/vm/manifests/: extra objects the chart doesn't have (the Grafana ExternalSecret)
+#
+# The NAME matters: Argo CD uses the Application name as the Helm release name. `vm` keeps every
+# resource name the same as under Terraform (vm-grafana, vmsingle-vm, …).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vm
+  namespace: argocd
+  annotations:
+    # After prometheus-operator-crds (-2): the operator must start with the ServiceMonitor CRD present, or it
+    # skips the converter watch. Before the apps (0): grafana-dashboards needs `monitoring` and the sidecar.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  sources:
+    - repoURL: https://victoriametrics.github.io/helm-charts/
+      chart: victoria-metrics-k8s-stack
+      targetRevision: 0.98.1 # same pin as EKS (VictoriaMetrics v1.156.0)
+      helm:
+        valueFiles:
+          # $values = the root of source 2. Later files win.
+          - $values/platform/vm/values.yaml
+          - $values/platform/envs/local/vm.yaml
+    - repoURL: https://github.com/AlexanderMinko/ssp-ming-k8s-local.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/AlexanderMinko/ssp-ming-k8s-local.git
+      targetRevision: main
+      path: platform/vm/manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true # `monitoring` is now Argo CD's (Terraform created it with the helm_release)
+      # Client-side apply copies each object into the last-applied-configuration annotation, capped at
+      # 256 KiB. The CRD vmscrapeconfigs is 267 KiB. Server-side apply keeps no such copy.
+      - ServerSideApply=true

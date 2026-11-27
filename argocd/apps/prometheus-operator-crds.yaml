@@ -1,0 +1,33 @@
+# prometheus-operator-crds Application — only the CRD definitions (ServiceMonitor, PodMonitor, …), no operator.
+# Was terraform/06-monitoring.tf (helm_release) until 27/11/2026.
+#
+# Why it exists: the app charts (exchange, bidders) ship a `ServiceMonitor`. The VM operator converts each one
+# into a VMServiceScrape, but does not install the ServiceMonitor CRD. Without it, the API server doesn't know
+# the kind and the exchange sync fails with "no matches for kind ServiceMonitor".
+#
+# Wave -2: the first child app. Order: CRDs (-2) → vm (-1) → everything else (0). The root app waits for each
+# wave to be Healthy before the next, which needs the Application health check in terraform/05-argocd.tf.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: prometheus-operator-crds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: prometheus-operator-crds
+    targetRevision: 33.0.2 # same pin as EKS (prometheus-operator v0.95.2)
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring # CRDs are cluster-scoped. The namespace is only the release's home; `vm` creates it.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The 10 CRDs are 0.3–0.86 MB each (prometheuses: 858 KB), far over the 256 KiB annotation cap of
+      # client-side apply. Server-side apply keeps no copy of the object.
+      - ServerSideApply=true

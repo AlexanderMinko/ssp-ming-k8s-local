@@ -1,0 +1,15 @@
+# platform/envs/local/vm.yaml — kind differences for the VM stack. Loaded after platform/vm/values.yaml.
+# Helm deep-merges maps, so only the changed keys are here. A list (accessModes) would replace, not merge.
+
+vmsingle:
+  spec:
+    resources:
+      requests:
+        cpu: 100m # EKS: 200m / 512Mi
+        memory: 256Mi
+    # local-path: a directory on the node that runs vmsingle. It doesn't enforce the size and dies with the cluster.
+    storage:
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 5Gi
